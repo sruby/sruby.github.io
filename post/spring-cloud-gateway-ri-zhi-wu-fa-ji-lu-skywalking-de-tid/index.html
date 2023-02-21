@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" >
+
+<title>Spring Cloud Gateway日志无法记录SkyWalking的TID | Coder</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
+<link rel="shortcut icon" href="https://sruby.github.io/favicon.ico?v=1676979268098">
+<link rel="stylesheet" href="https://sruby.github.io/styles/main.css">
+
+
+  
+    <link rel="stylesheet" href="https://unpkg.com/gitalk/dist/gitalk.css" />
+  
+
+  
+
+
+<link rel="stylesheet" href="https://unpkg.com/aos@next/dist/aos.css" />
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+
+
+
+    <meta name="description" content="问题
+在继承了SkyWalking日志工具的情况下，Spring Cloud Gateway的日志中TID为N/A,其他服务的日志均能够正常记录TID。
+SkyWalking UI可以正常记录包括Spring Cloud Gateway在内..." />
+    <meta name="keywords" content="TracdID,MDC,SkyWalking,Spring Cloud Gateway" />
+  </head>
+  <body>
+    <div id="app" class="main">
+
+      <div class="sidebar" :class="{ 'full-height': menuVisible }">
+  <div class="top-container" data-aos="fade-right">
+    <div class="top-header-container">
+      <a class="site-title-container" href="https://sruby.github.io">
+        <img src="https://sruby.github.io/images/avatar.png?v=1676979268098" class="site-logo">
+        <h1 class="site-title">Coder</h1>
+      </a>
+      <div class="menu-btn" @click="menuVisible = !menuVisible">
+        <div class="line"></div>
+      </div>
+    </div>
+    <div>
+      
+        
+          <a href="/" class="site-nav">
+            首页
+          </a>
+        
+      
+        
+          <a href="/archives" class="site-nav">
+            归档
+          </a>
+        
+      
+        
+          <a href="/tags" class="site-nav">
+            标签
+          </a>
+        
+      
+        
+          <a href="/post/about" class="site-nav">
+            关于
+          </a>
+        
+      
+    </div>
+  </div>
+  <div class="bottom-container" data-aos="flip-up" data-aos-offset="0">
+    <div class="social-container">
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    </div>
+    <div class="site-description">
+      Try again，fail again，fail better
+    </div>
+    <div class="site-footer">
+      Powered by <a href="https://github.com/getgridea/gridea" target="_blank">Gridea</a> | <a class="rss" href="https://sruby.github.io/atom.xml" target="_blank">RSS</a>
+    </div>
+  </div>
+</div>
+
+
+      <div class="main-container">
+        <div class="content-container" data-aos="fade-up">
+          <div class="post-detail">
+            <h2 class="post-title">Spring Cloud Gateway日志无法记录SkyWalking的TID</h2>
+            <div class="post-date">2023-02-20</div>
+            
+              <div class="feature-container" style="background-image: url('https://sruby.github.io/post-images/spring-cloud-gateway-ri-zhi-wu-fa-ji-lu-skywalking-de-tid.png')">
+              </div>
+            
+            <div class="post-content" v-pre>
+              <h1 id="问题">问题</h1>
+<p>在继承了SkyWalking日志工具的情况下，Spring Cloud Gateway的日志中TID为N/A,其他服务的日志均能够正常记录TID。<br>
+SkyWalking UI可以正常记录包括Spring Cloud Gateway在内的各个服务的TID。</p>
+<h1 id="原因">原因</h1>
+<p>SkyWalking agent plugin只保证将TID传递给OAP，而不保证一定把TID输出到日志。<br>
+如果需要支持，则需要使用方增加此特性。</p>
+<h1 id="agent-plugin源码分析">Agent plugin源码分析</h1>
+<p>Spring Cloud Gateway对应的plugin源码如下：<br>
+Agent plugin：spring-webflux-5.x-plugin<br>
+类：DispatcherHandlerHandleMethodInterceptor</p>
+<pre><code class="language-java">@Override  
+public void beforeMethod(EnhancedInstance objInst, Method method, Object[] allArguments, Class&lt;?&gt;[] argumentsTypes,  
+                         MethodInterceptResult result) throws Throwable {  
+    EnhancedInstance instance = getInstance(allArguments[0]);  
+  
+    ServerWebExchange exchange = (ServerWebExchange) allArguments[0];  
+  
+    ContextCarrier carrier = new ContextCarrier();  
+    CarrierItem next = carrier.items();  
+    HttpHeaders headers = exchange.getRequest().getHeaders();  
+    while (next.hasNext()) {  
+        next = next.next();  
+        List&lt;String&gt; header = headers.get(next.getHeadKey());  
+        if (header != null &amp;&amp; header.size() &gt; 0) {  
+            next.setHeadValue(header.get(0));  
+        }  
+    }  
+  
+    AbstractSpan span = ContextManager.createEntrySpan(exchange.getRequest().getURI().getPath(), carrier);  
+  
+    if (instance != null &amp;&amp; instance.getSkyWalkingDynamicField() != null) {  
+        ContextManager.continued((ContextSnapshot) instance.getSkyWalkingDynamicField());  
+    }  
+    span.setComponent(ComponentsDefine.SPRING_WEBFLUX);  
+    SpanLayer.asHttp(span);  
+    Tags.URL.set(span, exchange.getRequest().getURI().toString());  
+    HTTP.METHOD.set(span, exchange.getRequest().getMethodValue());  
+    instance.setSkyWalkingDynamicField(ContextManager.capture());  
+    span.prepareForAsync();  
+    ContextManager.stopSpan(span);  
+	//SKYWALING_SPAN保存到exchange
+    exchange.getAttributes().put(&quot;SKYWALING_SPAN&quot;, span);  
+}
+</code></pre>
+<h1 id="solution">Solution</h1>
+<h1 id="solution-1">Solution 1</h1>
+<ul>
+<li>只需要在filter中记录TID，便于排查问题，而不保存到日志框架的MDC种。</li>
+<li>根据源码分析部分可以得知plugin会把SKYWALING_SPAN保存到exchange<br>
+中，所以我们可以在exchange中获取SKYWALING_SPAN。</li>
+<li>从exchange中获取到Span对象后，需要通过反射的方式一层层获取到traceid，因为无法直接依赖包含这些类的agent-core包，会跟agent本身发生冲突。</li>
+</ul>
+<pre><code class="language-java">String traceId = &quot;N/A&quot;;  
+Object skywalingSpanObject = exchange.getAttributes().get(&quot;SKYWALING_SPAN&quot;);  
+if (ObjectUtils.isNotEmpty(skywalingSpanObject)) {  
+    try {  
+        Field owner = FieldUtils.getField(skywalingSpanObject.getClass(), &quot;owner&quot;, true);  
+        Object tracingContext = owner.get(skywalingSpanObject);  
+        Field segmentField = FieldUtils.getField(tracingContext.getClass(), &quot;segment&quot;, true);  
+        Object segment = segmentField.get(tracingContext);  
+        Field relatedGlobalTraceIdField = FieldUtils.getField(segment.getClass(), &quot;relatedGlobalTraceId&quot;, true);  
+        Object relatedGlobalTraceId = relatedGlobalTraceIdField.get(segment);  
+        String traceIdObject = relatedGlobalTraceId.toString();  
+        traceId = Stringutils.substrΩingBetween(traceIdObject, &quot;=&quot;, &quot;)&quot;);  
+    } catch (Exception e) {  
+        log.warn(&quot;get TID failed&quot;, e);  
+    }
+</code></pre>
+<h1 id="reference">Reference</h1>
+<blockquote>
+<p><a href="https://github.com/apache/skywalking/discussions/9232">SpringCloudGateway3.1.3, With apm-log4j2-2.x:8.10.0, does not display the real traceId, always display 'TID: N/A' · Discussion #9232 · apache/skywalking (github.com)</a><br>
+<a href="https://github.com/apache/skywalking/issues/5268">My log can't get traceId when I use Spring Cloud Gateway in my project ,all traceId in my log is &quot;[traceId:TID:N/A]&quot; · Issue #5268 · apache/skywalking (github.com)</a><br>
+<a href="https://www.jianshu.com/p/40727a0b9604">SpringCloudGateway使用Skywalking时日志打印traceId - 简书 (jianshu.com)</a></p>
+</blockquote>
+<p>#SkyWalking<br>
+#SpringCloudGateway<br>
+#MDC<br>
+#TracdID</p>
+
+            </div>
+            
+              <div class="tag-container">
+                
+                  <a href="https://sruby.github.io/tag/Tq4KmsjLA/" class="tag">
+                    TracdID
+                  </a>
+                
+                  <a href="https://sruby.github.io/tag/FNwf6W6BjN/" class="tag">
+                    MDC
+                  </a>
+                
+                  <a href="https://sruby.github.io/tag/fheqXtTxq7/" class="tag">
+                    SkyWalking
+                  </a>
+                
+                  <a href="https://sruby.github.io/tag/64k4lEFGjy/" class="tag">
+                    Spring Cloud Gateway
+                  </a>
+                
+              </div>
+            
+            
+
+            
+              
+                <div id="gitalk-container" data-aos="fade-in"></div>
+              
+
+              
+            
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/aos@next/dist/aos.js"></script>
+<script type="application/javascript">
+
+AOS.init();
+
+var app = new Vue({
+  el: '#app',
+  data: {
+    menuVisible: false,
+  },
+})
+
+</script>
+
+
+
+
+
+  
+    <script src="https://unpkg.com/gitalk/dist/gitalk.min.js"></script>
+    <script>
+
+      var gitalk = new Gitalk({
+        clientID: '009efc4c6f477cd05d3e',
+        clientSecret: '839d72705e6ae9cb725715fd6182d31683b56bb5',
+        repo: 'sruby.github.io',
+        owner: 'sruby',
+        admin: ['sruby'],
+        id: (location.pathname).substring(0, 49),      // Ensure uniqueness and length less than 50
+        distractionFreeMode: false  // Facebook-like distraction free mode
+      })
+
+      gitalk.render('gitalk-container')
+
+    </script>
+  
+
+  
+
+
+
+
+  </body>
+</html>
